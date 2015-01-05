@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# Upload files or folder WeTransfer
+# Upload files or folders to WeTransfer
 #
 # VERSION       :1.0
 # DATE          :2014-12-27
 # AUTHOR        :Kevin Raynel <https://github.com/kraynel>
 # URL           :https://github.com/kraynel/upload-wetransfer
-# DEPENDS       :pip install requests,requests-toolbelt
+# DEPENDS       :pip install requests requests-toolbelt
 
 from urlparse import urlparse, parse_qs
 from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
@@ -55,7 +55,7 @@ def getChunkInfoForUpload(transferId, fileObjectId, chunkNumber, chunkSize=CHUNK
     
     return json.loads(r.content)
 
-def drawProgressBar(percent, barLen = 20):
+def drawProgressBar(percent, barLen = 40):
     sys.stdout.write("\r")
     progress = ""
     for i in range(barLen):
@@ -66,6 +66,13 @@ def drawProgressBar(percent, barLen = 20):
     sys.stdout.write("[ %s ] %.2f%%" % (progress, percent * 100))
     sys.stdout.flush()
 
+def create_callback(previousChunks, fileSize):
+    
+    def callback(monitor):
+        drawProgressBar(float(previousChunks + monitor.bytes_read)/float(fileSize))
+
+    return callback
+
 def uploadChunk(chunkInfo, filename, dataBin, fileType, chunkNumber, fileSize):
     url = chunkInfo["url"]
     
@@ -74,12 +81,14 @@ def uploadChunk(chunkInfo, filename, dataBin, fileType, chunkNumber, fileSize):
         dataChunkUpload[k] = v
 
     dataChunkUpload["file"] = (filename, dataBin, fileType)
-    r = requests.post(url, files=dataChunkUpload)
-    print (chunkNumber * CHUNK_SIZE / fileSize)
-    #drawProgressBar(chunkNumber * CHUNK_SIZE / fileSize)
+    
+    e = MultipartEncoder(fields=dataChunkUpload)
+    m = MultipartEncoderMonitor(e, create_callback(chunkNumber*CHUNK_SIZE, fileSize))
+
+    r = requests.post(url, data=m, headers={'Content-Type': e.content_type})
+    print("")
 
 def finalizeChunks(transferId, fileObjectId, partCount):
-    print("Finalize file/chunk : ")
     dataFinalizeChunk = {
     "finalize_chunked"  : "true",
     "part_count"  : partCount
@@ -92,7 +101,12 @@ def finalizeTransfer(transferId):
     print("Finalize transfer")
     
     r = requests.put((WE_TRANSFER_API_URL + "/{0}/finalize").format(transferId))
-    print(r.text)
+
+def cancelTransfer(transferId):
+    print("Cancelling transfer")
+    
+    r = requests.put((WE_TRANSFER_API_URL + "/{0}/cancel").format(transferId))
+    
     
 def read_in_chunks(file_object, chunk_size=CHUNK_SIZE):
     """Lazy function (generator) to read a file piece by piece.
@@ -112,15 +126,14 @@ def uploadFile(transferId, fileToUpload):
 
         dataFileObjectId = getFileObjectId(transferId, fileName, fileSize)
         if dataFileObjectId.has_key("url"):
-            uploadChunk(dataFileObjectId, fileName, f.read(fileSize), fileMimeType)
+            uploadChunk(dataFileObjectId, fileName, f.read(fileSize), fileMimeType, 0, fileSize)
             finalizeChunks(transferId, dataFileObjectId["file_object_id"], 1)
         else:
             chunkNumber = 1
-            print("Upload file : " + fileName)
-    
+            
             for piece in read_in_chunks(f):
                 chunkInfo = getChunkInfoForUpload(transferId, dataFileObjectId["file_object_id"], chunkNumber, sys.getsizeof(piece))
-                uploadChunk(chunkInfo, fileName, piece, fileMimeType, chunkNumber, fileSize)
+                uploadChunk(chunkInfo, fileName, piece, fileMimeType, chunkNumber-1, fileSize)
                 chunkNumber = chunkNumber + 1
 
             finalizeChunks(transferId, dataFileObjectId["file_object_id"], chunkNumber - 1)
@@ -149,19 +162,24 @@ def main(argv):
     args = parser.parse_args();
     mimetypes.init()
 
-    transferId = getTransferId(args.sender, args.receiver, args.message)
+    try:
+        transferId = getTransferId(args.sender, args.receiver, args.message)
     
-    for it in args.files:
-        if os.path.isfile(it):
-            print("Upload file : " + it)
-            uploadFile(transferId, files)
-        elif os.path.isdir(it):
-            uploadDir(it, transferId, args.recursive)
-        else:
-            print("Not a file/directory : " + it)
-            
-    
-    finalizeTransfer(transferId)
+        for it in args.files:
+            if os.path.isfile(it):
+                print("Upload file : " + it)
+                uploadFile(transferId, it)
+            elif os.path.isdir(it):
+                uploadDir(it, transferId, args.recursive)
+            else:
+                print("Not a file/directory : " + it)
+                
+        
+        finalizeTransfer(transferId)
+    except KeyboardInterrupt:
+        print ""
+        if transferId:
+            cancelTransfer(transferId)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
