@@ -4,7 +4,7 @@ Upload files or folders to WeTransfer
 
 ## Requirements
 
-upload-wetransfer depends on requests and requests-toolbelt. You can install these requirements with `pip install requests requests-toolbelt`
+upload-wetransfer depends on [`python-requests`](https://github.com/kennethreitz/requests) and [`requests-toolbelt`](https://github.com/sigmavirus24/requests-toolbelt). You can install these requirements with `pip install requests requests-toolbelt`
 
 ## Usage
 
